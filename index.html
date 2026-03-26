@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smartphone Digital Twin</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        /* [1] GLOBAL STYLES: Dark theme for reduced eye strain and "Sci-Fi" STEM aesthetic */
+        body { 
+            margin: 0; 
+            background: #111; 
+            color: #00ff00; 
+            font-family: 'Courier New', monospace; 
+            overflow: hidden; /* No scrollbars */
+        }
+
+        /* [2] UI OVERLAY: Positioned absolutely to float over the 3D Canvas */
+        #dashboard {
+            position: absolute; 
+            top: 20px; 
+            left: 20px; 
+            width: 300px;
+            padding: 15px; 
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid #00ff00; 
+            border-radius: 5px; 
+            z-index: 10; /* Keeps dashboard floating over the 3D Canvas */
+        }
+
+        /* [3] ACTION BUTTONS: Clean, consistent interactive elements */
+        #controls { 
+            margin-top: 15px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 8px; 
+        }
+
+        button { 
+            background: #222; 
+            color: #00ff00; 
+            border: 1px solid #00ff00; 
+            padding: 10px; 
+            cursor: pointer; 
+            font-family: inherit; 
+            font-size: 12px;
+            transition: 0.2s; /* Smooth transition for hover effects */
+        }
+
+        /* [4] HOVER STATE: Visual feedback for user interaction */
+        button:hover { 
+            background: #00ff00; 
+            color: #000; 
+        }
+
+        button:disabled {
+            border-color: #444;
+            color: #444;
+            cursor: not-allowed;
+        }
+
+        /* [5] ANALYTICS VIEW: Dedicated space for live data visualization */
+        #graph-container {
+            position: absolute; 
+            bottom: 20px; 
+            left: 20px; 
+            right: 20px; 
+            height: 150px;
+            background: rgba(0, 0, 0, 0.8); 
+            border: 1px solid #444; 
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="dashboard">
+        <div style="font-weight: bold; margin-bottom: 10px; letter-spacing: 1px;">SYSTEM TELEMETRY</div>
+        <div id="status">STATUS: OFFLINE</div>
+        <div id="record-count">SAMPLES: 0</div>
+        
+        <div id="controls">
+            <button id="toggleBtn" onclick="toggleRecording()">START CAPTURE</button>
+            <button onclick="resetOrientation()">RECALIBRATE (ZERO)</button>
+            <button id="downloadBtn" onclick="downloadCSV()" disabled>DOWNLOAD CSV</button>
+        </div>
+    </div>
+
+    <div id="graph-container">
+        <canvas id="liveChart"></canvas>
+    </div>
+
+    <script>
+        /**
+         * [6] CORE LOGIC: Digital Twin Controller
+         */
+
+        // [7] GLOBAL CONFIGURATION: Ask for the IP address when the page loads
+        const USER_IP = prompt("Enter your Phyphox IP address:", "192.168.4.48");
+	      const PHONE_IP = `http://${USER_IP}:8080`; 
+        
+        // [8] STATE MANAGEMENT: Tracking data, recording status, and calibration
+        let capturedData = []; /* Empty bucket for data fetched by bridge */
+        let isRecording = false;
+        let offsetX = 0, offsetY = 0, offsetZ = 0;
+
+        /**
+         * [9] ANALYTICS INITIALIZATION
+         */
+        const ctx = document.getElementById('liveChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: { 
+                labels: Array(50).fill(''), 
+                datasets: [{ 
+                    data: Array(50).fill(0), /* Prefills the chart with 50 zeros */
+                    borderColor: '#00ff00', 
+                    fill: false, 
+                    tension: 0.4, /* Gives a smooth non-jagged line */
+                    pointRadius: 0 // Cleaner look for high-speed data
+                }] 
+            },
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                scales: { 
+                    y: { min: -180, max: 180, grid: { color: '#333' } }, /* Full range of rotation for a phone being flipped */
+                    x: { display: false }
+                }, 
+                plugins: { legend: { display: false } } 
+            }
+        });
+
+        /**
+         * [10] 3D ENGINE INITIALIZATION (Three.js)
+         */
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // [11] ENTITY CREATION: The virtual phone object
+        const geometry = new THREE.BoxGeometry(1.5, 3, 0.2);
+        const material = new THREE.MeshNormalMaterial();
+        const phone = new THREE.Mesh(geometry, material);
+        
+        scene.add(phone);
+        camera.position.z = 5;
+
+        /**
+         * [12] USER INTERACTION FUNCTIONS
+         */
+        function resetOrientation() {
+            offsetX = phone.rotation.x + offsetX;
+            offsetY = phone.rotation.y + offsetY;
+            offsetZ = phone.rotation.z + offsetZ;
+        }
+
+        function toggleRecording() {
+            isRecording = !isRecording;
+            const btn = document.getElementById('toggleBtn');
+            const dlBtn = document.getElementById('downloadBtn');
+            
+            btn.innerText = isRecording ? "STOP CAPTURE" : "START CAPTURE";
+            btn.style.color = isRecording ? "#ff0000" : "#00ff00";
+            btn.style.borderColor = isRecording ? "#ff0000" : "#00ff00";
+            
+            if (isRecording) {
+                capturedData = []; 
+                dlBtn.disabled = true;
+            } else {
+                dlBtn.disabled = false;
+            }
+        }
+
+        /**
+         * [13] DATA PERSISTENCE: Exporting telemetry to CSV
+         */
+        function downloadCSV() {
+            const header = "Timestamp,Pitch_X,Yaw_Y,Roll_Z\n";
+            const rows = capturedData.map(r => `${r.time},${r.x},${r.y},${r.z}`).join("\n");
+            const blob = new Blob([header + rows], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            link.setAttribute("download", `twin_telemetry_${Date.now()}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        /**
+         * [14] DATA BRIDGE: Fetching and Mapping hardware sensors to virtual objects
+         */
+        async function updateTwin() {
+            try {
+                // [15] API FETCH: Async request to Phyphox server
+                const response = await fetch(`${PHONE_IP}/get?gyroX&gyroY&gyroZ`);
+                const data = await response.json();
+                
+                if (data.buffer) {
+                    // [16] DATA EXTRACTION
+                    const { gyroX, gyroY, gyroZ } = data.buffer;
+
+                    // [17] VIRTUAL MAPPING: Updating 3D rotation with offsets
+                    phone.rotation.set(gyroX.value - offsetX, gyroY.value - offsetY, gyroZ.value - offsetZ);
+
+                    // [18] TELEMETRY CONVERSION: Radians to Degrees
+                    const xDeg = ((gyroX.value - offsetX) * 180 / Math.PI).toFixed(2);
+                    const yDeg = ((gyroY.value - offsetY) * 180 / Math.PI).toFixed(2);
+                    const zDeg = ((gyroZ.value - offsetZ) * 180 / Math.PI).toFixed(2);
+
+                    // [19] LIVE GRAPH UPDATE
+                    chart.data.datasets[0].data.shift(); /* Removes the oldest piece of data from the start of the list */
+                    chart.data.datasets[0].data.push(xDeg); /* Add the newest data to the end of the list */
+                    chart.update('none'); /* Skips the animation to conserve CPU power */
+
+                    // [20] DATA LOGGING (if active)
+                    if (isRecording) {
+                        capturedData.push({ time: new Date().toLocaleTimeString(), x: xDeg, y: yDeg, z: zDeg }); /* Adds a human-readable timestamp to every row of data */
+                        document.getElementById('record-count').innerText = `SAMPLES: ${capturedData.length}`;
+                    }
+                    document.getElementById('status').innerText = "STATUS: LIVE";
+                    document.getElementById('status').style.color = "#00ff00";
+                }
+            } catch (err) {
+                document.getElementById('status').innerText = "STATUS: OFFLINE";
+                document.getElementById('status').style.color = "#ff0000";
+            }
+        }
+
+        /**
+         * [21] EXECUTION ENGINES
+         * 1. Telemetry Loop (20Hz)
+         * 2. Rendering Loop (Screen Refresh Rate)
+         */
+        setInterval(updateTwin, 50);
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // [22] Handle Window Resize for 3D Scene
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
