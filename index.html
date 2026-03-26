@@ -201,7 +201,8 @@
         async function updateTwin() {
             try {
                 // [15] API FETCH: Async request to Phyphox server
-                const response = await fetch(`${PHONE_IP}/get?gyroX&gyroY&gyroZ`, {mode: 'no-cors'}); /* Bypass CORS block */
+                const proxy = "https://cors-anywhere.herokuapp.com/";
+				const response = await fetch(`${proxy}${PHONE_IP}/get?gyroX&gyroY&gyroZ`);
                 const data = await response.json();
                 
                 if (data.buffer) {
